@@ -1,0 +1,104 @@
+---
+# Playbook: Connect to Your Spark
+# Purpose: Single-node Spark system setup and remote access configuration
+# Usage: ansible-playbook connect-to-your-spark.yaml -i inventory.ini
+
+- name: Connect to Your Spark - Single Node Setup
+  hosts: spark_nodes
+  become: yes
+  gather_facts: yes
+
+  vars:
+    ssh_key_path: "{{ ansible_env.HOME }}/.ssh/dgx_key"
+    spark_user: "{{ ansible_user }}"
+    spark_hostname: "{{ ansible_hostname }}"
+
+  tasks:
+    - name: Update system packages
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages
+      package:
+        name:
+          - openssh-server
+          - net-tools
+          - curl
+          - wget
+          - htop
+          - vim
+          - git
+        state: present
+
+    - name: Ensure SSH service is running
+      service:
+        name: sshd
+        state: started
+        enabled: yes
+
+    - name: Create .ssh directory
+      file:
+        path: "{{ ansible_env.HOME }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ spark_user }}"
+
+    - name: Check if SSH key exists
+      stat:
+        path: "{{ ssh_key_path }}"
+      register: ssh_key_stat
+      delegate_to: localhost
+
+    - name: Generate SSH key pair (if not exists)
+      command: ssh-keygen -t ed25519 -f {{ ssh_key_path }} -N "" -C "spark-{{ spark_hostname }}"
+      when: not ssh_key_stat.stat.exists
+      delegate_to: localhost
+
+    - name: Read SSH public key
+      slurp:
+        src: "{{ ssh_key_path }}.pub"
+      register: ssh_pub_key
+      delegate_to: localhost
+
+    - name: Add SSH public key to authorized_keys
+      authorized_key:
+        user: "{{ spark_user }}"
+        key: "{{ ssh_pub_key.content | b64decode }}"
+        state: present
+
+    - name: Configure SSH daemon for security
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop:
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin prohibit-password' }
+        - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^#?X11Forwarding', line: 'X11Forwarding yes' }
+      notify: restart sshd
+
+    - name: Test SSH connection
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        state: started
+        timeout: 10
+
+    - name: Display connection information
+      debug:
+        msg:
+          - "Spark node setup completed!"
+          - "Hostname: {{ spark_hostname }}"
+          - "IP Address: {{ ansible_default_ipv4.address }}"
+          - "SSH Key: {{ ssh_key_path }}"
+          - "Connect with: ssh -i {{ ssh_key_path }} {{ spark_user }}@{{ ansible_host }}"
+
+  handlers:
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted

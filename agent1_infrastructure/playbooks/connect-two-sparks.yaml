@@ -1,0 +1,187 @@
+---
+# Playbook: Connect Two Sparks
+# Purpose: Multi-node Spark cluster setup with bidirectional SSH access
+# Usage: ansible-playbook connect-two-sparks.yaml -i inventory.ini
+
+- name: Connect Two Sparks - Multi-Node Cluster Setup
+  hosts: spark_cluster
+  become: yes
+  gather_facts: yes
+
+  vars:
+    ssh_key_path: "{{ ansible_env.HOME }}/.ssh/dgx_key"
+    cluster_user: "{{ ansible_user }}"
+    nfs_share_path: "/shared/cluster"
+    hosts_file_backup: "/etc/hosts.backup"
+
+  tasks:
+    - name: Gather facts from all nodes
+      setup:
+      delegate_to: "{{ item }}"
+      delegate_facts: yes
+      loop: "{{ groups['spark_cluster'] }}"
+
+    - name: Install cluster required packages
+      package:
+        name:
+          - openssh-server
+          - nfs-common
+          - pdsh
+          - clustershell
+          - net-tools
+          - iperf3
+        state: present
+
+    - name: Create cluster SSH key on first node
+      block:
+        - name: Generate cluster SSH key
+          command: ssh-keygen -t ed25519 -f {{ ssh_key_path }} -N "" -C "spark-cluster"
+          args:
+            creates: "{{ ssh_key_path }}"
+
+        - name: Read cluster public key
+          slurp:
+            src: "{{ ssh_key_path }}.pub"
+          register: cluster_pub_key
+
+        - name: Read cluster private key
+          slurp:
+            src: "{{ ssh_key_path }}"
+          register: cluster_priv_key
+      when: inventory_hostname == groups['spark_cluster'][0]
+      run_once: yes
+
+    - name: Distribute cluster SSH keys to all nodes
+      block:
+        - name: Create .ssh directory on all nodes
+          file:
+            path: "{{ ansible_env.HOME }}/.ssh"
+            state: directory
+            mode: '0700'
+
+        - name: Copy private key to all nodes
+          copy:
+            content: "{{ hostvars[groups['spark_cluster'][0]]['cluster_priv_key']['content'] | b64decode }}"
+            dest: "{{ ssh_key_path }}"
+            mode: '0600'
+          when: cluster_priv_key is defined
+
+        - name: Copy public key to all nodes
+          copy:
+            content: "{{ hostvars[groups['spark_cluster'][0]]['cluster_pub_key']['content'] | b64decode }}"
+            dest: "{{ ssh_key_path }}.pub"
+            mode: '0644'
+          when: cluster_pub_key is defined
+
+        - name: Add cluster key to authorized_keys on all nodes
+          authorized_key:
+            user: "{{ cluster_user }}"
+            key: "{{ hostvars[groups['spark_cluster'][0]]['cluster_pub_key']['content'] | b64decode }}"
+            state: present
+
+    - name: Backup existing hosts file
+      copy:
+        src: /etc/hosts
+        dest: "{{ hosts_file_backup }}"
+        remote_src: yes
+        backup: yes
+
+    - name: Update /etc/hosts with cluster nodes
+      blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} ANSIBLE MANAGED SPARK CLUSTER HOSTS"
+        block: |
+          {% for host in groups['spark_cluster'] %}
+          {{ hostvars[host]['ansible_default_ipv4']['address'] }} {{ hostvars[host]['ansible_hostname'] }} {{ hostvars[host]['ansible_fqdn'] }}
+          {% endfor %}
+
+    - name: Configure SSH client for passwordless access
+      blockinfile:
+        path: "{{ ansible_env.HOME }}/.ssh/config"
+        create: yes
+        mode: '0600'
+        marker: "# {mark} ANSIBLE MANAGED SPARK CLUSTER CONFIG"
+        block: |
+          Host spark-* dgx-*
+              IdentityFile {{ ssh_key_path }}
+              User {{ cluster_user }}
+              StrictHostKeyChecking accept-new
+              ServerAliveInterval 60
+              ServerAliveCountMax 3
+
+    - name: Test SSH connectivity between all nodes
+      command: ssh -o BatchMode=yes -o ConnectTimeout=5 {{ item }} "hostname"
+      loop: "{{ groups['spark_cluster'] }}"
+      register: ssh_test
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Create shared directory structure
+      file:
+        path: "{{ nfs_share_path }}"
+        state: directory
+        mode: '0755'
+      when: inventory_hostname == groups['spark_cluster'][0]
+
+    - name: Configure NFS server on primary node
+      block:
+        - name: Install NFS server
+          package:
+            name: nfs-kernel-server
+            state: present
+
+        - name: Configure NFS exports
+          lineinfile:
+            path: /etc/exports
+            line: "{{ nfs_share_path }} {{ groups['spark_cluster'] | map('extract', hostvars, 'ansible_default_ipv4') | map(attribute='address') | join('(rw,sync,no_subtree_check) ') }}(rw,sync,no_subtree_check)"
+            create: yes
+
+        - name: Export NFS shares
+          command: exportfs -ra
+
+        - name: Start NFS server
+          service:
+            name: nfs-kernel-server
+            state: started
+            enabled: yes
+      when: inventory_hostname == groups['spark_cluster'][0]
+
+    - name: Mount NFS share on secondary nodes
+      mount:
+        path: "{{ nfs_share_path }}"
+        src: "{{ hostvars[groups['spark_cluster'][0]]['ansible_default_ipv4']['address'] }}:{{ nfs_share_path }}"
+        fstype: nfs
+        opts: defaults
+        state: mounted
+      when: inventory_hostname != groups['spark_cluster'][0]
+
+    - name: Create cluster info file
+      copy:
+        content: |
+          Spark Cluster Configuration
+          ===========================
+          Cluster Name: {{ cluster_name | default('spark-cluster') }}
+          Setup Date: {{ ansible_date_time.iso8601 }}
+
+          Nodes:
+          {% for host in groups['spark_cluster'] %}
+          - {{ hostvars[host]['ansible_hostname'] }}
+            IP: {{ hostvars[host]['ansible_default_ipv4']['address'] }}
+            CPU: {{ hostvars[host]['ansible_processor_vcpus'] }} cores
+            Memory: {{ (hostvars[host]['ansible_memtotal_mb'] / 1024) | round(1) }} GB
+          {% endfor %}
+
+          SSH Key: {{ ssh_key_path }}
+          Shared Storage: {{ nfs_share_path }}
+        dest: "{{ nfs_share_path }}/cluster_info.txt"
+      when: inventory_hostname == groups['spark_cluster'][0]
+
+    - name: Display cluster setup summary
+      debug:
+        msg:
+          - "Multi-node Spark cluster setup completed!"
+          - "Cluster nodes: {{ groups['spark_cluster'] | join(', ') }}"
+          - "Primary node: {{ groups['spark_cluster'][0] }}"
+          - "SSH connectivity: {{ 'SUCCESS' if ssh_test is succeeded else 'CHECK REQUIRED' }}"
+          - "Shared storage: {{ nfs_share_path }}"
+      run_once: yes

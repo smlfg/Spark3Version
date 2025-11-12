@@ -1,0 +1,43 @@
+# Spark Cluster Configuration Example
+# Copy this file to cluster.yaml and customize for your setup
+
+cluster_name: spark-cluster
+
+# Enable/disable optional components
+enable_tailscale: true
+enable_nccl: true
+
+# Tailscale authentication key (get from https://login.tailscale.com/admin/settings/keys)
+# Can also be set via environment variable: TAILSCALE_AUTH_KEY
+tailscale_auth_key: ""
+
+# Cluster nodes
+nodes:
+  - hostname: spark-001
+    ip: 192.168.1.101
+    user: ubuntu
+
+  - hostname: spark-002
+    ip: 192.168.1.102
+    user: ubuntu
+
+# SSH configuration
+ssh_key_path: ~/.ssh/dgx_key
+ssh_key_type: ed25519
+
+# Network configuration (optional)
+network:
+  interface: eth0
+  subnet: 192.168.1.0/24
+
+# NCCL configuration (optional)
+nccl:
+  socket_ifname: ""  # Auto-detect if empty
+  ib_disable: "0"    # 0 = use InfiniBand if available
+  debug_level: INFO
+
+# NFS shared storage (optional)
+nfs:
+  enabled: true
+  share_path: /shared/cluster
+  primary_node: spark-001

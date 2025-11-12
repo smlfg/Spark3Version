@@ -1,0 +1,14 @@
+# Ansible Inventory Example for Spark Cluster
+# Copy this file to inventory.ini and customize for your setup
+
+[spark_nodes]
+spark-001 ansible_host=192.168.1.101 ansible_user=ubuntu
+spark-002 ansible_host=192.168.1.102 ansible_user=ubuntu
+
+[spark_cluster:children]
+spark_nodes
+
+[spark_cluster:vars]
+cluster_name=spark-cluster
+ssh_key_path=~/.ssh/dgx_key
+ansible_python_interpreter=/usr/bin/python3

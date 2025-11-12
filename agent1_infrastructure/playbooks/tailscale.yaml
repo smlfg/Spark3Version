@@ -1,0 +1,205 @@
+---
+# Playbook: Tailscale VPN Setup
+# Purpose: Configure Tailscale VPN for secure cluster communication
+# Usage: ansible-playbook tailscale.yaml -i inventory.ini --extra-vars "tailscale_auth_key=<your-key>"
+
+- name: Tailscale VPN Setup for Spark Cluster
+  hosts: spark_cluster
+  become: yes
+  gather_facts: yes
+
+  vars:
+    tailscale_auth_key: "{{ lookup('env', 'TAILSCALE_AUTH_KEY') }}"
+    tailscale_hostname_prefix: "spark"
+    advertise_routes: []
+
+  pre_tasks:
+    - name: Validate Tailscale auth key
+      fail:
+        msg: "Tailscale auth key is required. Set TAILSCALE_AUTH_KEY environment variable or pass --extra-vars 'tailscale_auth_key=<key>'"
+      when: tailscale_auth_key is not defined or tailscale_auth_key == ""
+      run_once: yes
+
+  tasks:
+    - name: Detect operating system
+      set_fact:
+        os_family: "{{ ansible_os_family | lower }}"
+
+    - name: Install Tailscale on Debian/Ubuntu
+      block:
+        - name: Add Tailscale GPG key
+          apt_key:
+            url: https://pkgs.tailscale.com/stable/ubuntu/focal.noarmor.gpg
+            keyring: /usr/share/keyrings/tailscale-archive-keyring.gpg
+            state: present
+
+        - name: Add Tailscale repository
+          apt_repository:
+            repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu focal main"
+            filename: tailscale
+            state: present
+
+        - name: Install Tailscale package
+          apt:
+            name: tailscale
+            state: present
+            update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install Tailscale on RedHat/CentOS
+      block:
+        - name: Add Tailscale repository
+          yum_repository:
+            name: tailscale
+            description: Tailscale stable
+            baseurl: https://pkgs.tailscale.com/stable/rhel/$releasever/$basearch
+            gpgkey: https://pkgs.tailscale.com/stable/rhel/$releasever/repo.gpg
+            gpgcheck: yes
+            enabled: yes
+
+        - name: Install Tailscale package
+          dnf:
+            name: tailscale
+            state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Enable and start Tailscale service
+      systemd:
+        name: tailscaled
+        enabled: yes
+        state: started
+
+    - name: Set Tailscale hostname
+      set_fact:
+        tailscale_hostname: "{{ tailscale_hostname_prefix }}-{{ inventory_hostname_short }}"
+
+    - name: Connect to Tailscale network
+      command: >
+        tailscale up
+        --authkey={{ tailscale_auth_key }}
+        --hostname={{ tailscale_hostname }}
+        --accept-routes
+        {% if advertise_routes | length > 0 %}--advertise-routes={{ advertise_routes | join(',') }}{% endif %}
+      register: tailscale_up
+      changed_when: "'Success' in tailscale_up.stderr or tailscale_up.rc == 0"
+
+    - name: Enable IP forwarding for subnet routing
+      sysctl:
+        name: "{{ item }}"
+        value: '1'
+        state: present
+        sysctl_set: yes
+        reload: yes
+      loop:
+        - net.ipv4.ip_forward
+        - net.ipv6.conf.all.forwarding
+      when: advertise_routes | length > 0
+
+    - name: Wait for Tailscale to be ready
+      wait_for:
+        timeout: 10
+
+    - name: Get Tailscale IP address
+      command: tailscale ip -4
+      register: tailscale_ip
+      changed_when: false
+
+    - name: Get Tailscale IPv6 address
+      command: tailscale ip -6
+      register: tailscale_ip6
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Get Tailscale status
+      command: tailscale status --json
+      register: tailscale_status
+      changed_when: false
+
+    - name: Parse Tailscale status
+      set_fact:
+        tailscale_info:
+          ipv4: "{{ tailscale_ip.stdout }}"
+          ipv6: "{{ tailscale_ip6.stdout | default('N/A') }}"
+          hostname: "{{ tailscale_hostname }}"
+          status: "{{ (tailscale_status.stdout | from_json).BackendState }}"
+
+    - name: Save Tailscale configuration
+      copy:
+        content: |
+          # Tailscale Configuration for {{ inventory_hostname }}
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          TAILSCALE_IP={{ tailscale_info.ipv4 }}
+          TAILSCALE_IP6={{ tailscale_info.ipv6 }}
+          TAILSCALE_HOSTNAME={{ tailscale_info.hostname }}
+          TAILSCALE_STATUS={{ tailscale_info.status }}
+        dest: /etc/tailscale/cluster.env
+        mode: '0644'
+
+    - name: Update /etc/hosts with Tailscale IPs
+      blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} ANSIBLE MANAGED TAILSCALE CLUSTER HOSTS"
+        block: |
+          {% for host in groups['spark_cluster'] %}
+          {% if hostvars[host]['tailscale_info'] is defined %}
+          {{ hostvars[host]['tailscale_info']['ipv4'] }} {{ hostvars[host]['tailscale_info']['hostname'] }}
+          {% endif %}
+          {% endfor %}
+
+    - name: Configure SSH to use Tailscale IPs
+      blockinfile:
+        path: "{{ ansible_env.HOME }}/.ssh/config"
+        create: yes
+        mode: '0600'
+        marker: "# {mark} ANSIBLE MANAGED TAILSCALE SSH CONFIG"
+        block: |
+          {% for host in groups['spark_cluster'] %}
+          {% if hostvars[host]['tailscale_info'] is defined %}
+          Host {{ hostvars[host]['tailscale_info']['hostname'] }}
+              HostName {{ hostvars[host]['tailscale_info']['ipv4'] }}
+              User {{ ansible_user }}
+              StrictHostKeyChecking accept-new
+          {% endif %}
+          {% endfor %}
+
+    - name: Test Tailscale connectivity
+      command: ping -c 3 {{ item }}
+      loop: "{{ groups['spark_cluster'] | map('extract', hostvars, 'tailscale_info') | map(attribute='ipv4') | list }}"
+      register: ping_test
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display Tailscale setup summary
+      debug:
+        msg:
+          - "Tailscale VPN setup completed!"
+          - "Hostname: {{ tailscale_info.hostname }}"
+          - "IPv4: {{ tailscale_info.ipv4 }}"
+          - "IPv6: {{ tailscale_info.ipv6 }}"
+          - "Status: {{ tailscale_info.status }}"
+          - "Connectivity test: {{ 'SUCCESS' if ping_test is succeeded else 'CHECK REQUIRED' }}"
+
+- name: Generate Tailscale cluster map
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create Tailscale cluster map
+      copy:
+        content: |
+          Tailscale Cluster Map
+          =====================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          Nodes:
+          {% for host in groups['spark_cluster'] %}
+          {% if hostvars[host]['tailscale_info'] is defined %}
+          - {{ hostvars[host]['inventory_hostname'] }}
+            Tailscale Hostname: {{ hostvars[host]['tailscale_info']['hostname'] }}
+            Tailscale IPv4: {{ hostvars[host]['tailscale_info']['ipv4'] }}
+            Tailscale IPv6: {{ hostvars[host]['tailscale_info']['ipv6'] }}
+            Status: {{ hostvars[host]['tailscale_info']['status'] }}
+          {% endif %}
+          {% endfor %}
+        dest: ./tailscale_cluster_map.txt
+      delegate_to: localhost

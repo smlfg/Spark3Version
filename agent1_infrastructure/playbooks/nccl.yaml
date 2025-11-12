@@ -1,0 +1,334 @@
+---
+# Playbook: NCCL Multi-GPU Communication Setup
+# Purpose: Configure NVIDIA NCCL for multi-GPU and multi-node training
+# Usage: ansible-playbook nccl.yaml -i inventory.ini
+
+- name: NCCL Multi-GPU Communication Setup
+  hosts: spark_cluster
+  become: yes
+  gather_facts: yes
+
+  vars:
+    nccl_version: "2.19.3-1"
+    cuda_version: "12.2"
+    nccl_socket_ifname: ""  # Auto-detect or set explicitly (e.g., "eth0,eth1")
+    nccl_ib_disable: "0"    # 0 = use InfiniBand if available, 1 = disable
+    nccl_net_gdr_level: "5" # GPU Direct RDMA level (0-5)
+    nccl_p2p_level: "NVL"   # P2P level: NVL, PXB, PIX, SYS
+    nccl_debug: "INFO"      # DEBUG, INFO, WARN
+
+  pre_tasks:
+    - name: Check for NVIDIA GPU
+      command: nvidia-smi
+      register: nvidia_smi
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if no NVIDIA GPU detected
+      fail:
+        msg: "No NVIDIA GPU detected. NCCL requires NVIDIA GPUs."
+      when: nvidia_smi.rc != 0
+
+  tasks:
+    - name: Get CUDA version
+      shell: nvcc --version | grep "release" | awk '{print $5}' | cut -d',' -f1
+      register: installed_cuda_version
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display CUDA version
+      debug:
+        msg: "Detected CUDA version: {{ installed_cuda_version.stdout | default('Not found') }}"
+
+    - name: Install NCCL dependencies
+      package:
+        name:
+          - build-essential
+          - devscripts
+          - debhelper
+          - fakeroot
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Add NVIDIA NCCL repository (Debian/Ubuntu)
+      block:
+        - name: Add NVIDIA GPG key
+          apt_key:
+            url: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub
+            state: present
+
+        - name: Add NVIDIA NCCL repository
+          apt_repository:
+            repo: "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64 /"
+            filename: nvidia-nccl
+            state: present
+            update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install NCCL packages
+      apt:
+        name:
+          - libnccl2
+          - libnccl-dev
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Verify NCCL installation
+      command: dpkg -l | grep nccl
+      register: nccl_installed
+      changed_when: false
+
+    - name: Get GPU topology
+      command: nvidia-smi topo -m
+      register: gpu_topology
+      changed_when: false
+
+    - name: Display GPU topology
+      debug:
+        msg: "{{ gpu_topology.stdout_lines }}"
+
+    - name: Detect network interfaces
+      set_fact:
+        network_interfaces: "{{ ansible_interfaces | reject('match', '^lo$') | list }}"
+
+    - name: Auto-detect high-speed network interface
+      set_fact:
+        nccl_socket_ifname: "{{ ansible_default_ipv4.interface }}"
+      when: nccl_socket_ifname == ""
+
+    - name: Check for InfiniBand
+      command: ibstat
+      register: ib_check
+      changed_when: false
+      failed_when: false
+
+    - name: Set InfiniBand configuration
+      set_fact:
+        has_infiniband: "{{ ib_check.rc == 0 }}"
+        nccl_ib_disable: "{{ '0' if ib_check.rc == 0 else '1' }}"
+
+    - name: Install InfiniBand tools (if available)
+      package:
+        name:
+          - infiniband-diags
+          - ibverbs-utils
+          - rdma-core
+        state: present
+      when: has_infiniband | bool
+      ignore_errors: yes
+
+    - name: Create NCCL configuration directory
+      file:
+        path: /etc/nccl
+        state: directory
+        mode: '0755'
+
+    - name: Configure NCCL environment
+      copy:
+        content: |
+          # NCCL Configuration for Spark Cluster
+          # Generated: {{ ansible_date_time.iso8601 }}
+
+          # Network Interface Configuration
+          export NCCL_SOCKET_IFNAME={{ nccl_socket_ifname }}
+          export NCCL_IB_DISABLE={{ nccl_ib_disable }}
+          export NCCL_NET_GDR_LEVEL={{ nccl_net_gdr_level }}
+          export NCCL_P2P_LEVEL={{ nccl_p2p_level }}
+
+          # Debug and Logging
+          export NCCL_DEBUG={{ nccl_debug }}
+          export NCCL_DEBUG_SUBSYS=INIT,ENV
+
+          # Performance Tuning
+          export NCCL_IB_TIMEOUT=22
+          export NCCL_IB_HCA={{ '^mlx' if has_infiniband else '' }}
+          export NCCL_NSOCKS_PERTHREAD=4
+          export NCCL_SOCKET_NTHREADS=4
+
+          # Multi-node Configuration
+          export NCCL_CROSS_NIC=1
+          export NCCL_ALGO=Ring,Tree
+          export NCCL_PROTO=Simple
+
+          # GPU Direct RDMA (if InfiniBand available)
+          {% if has_infiniband %}
+          export NCCL_NET_GDR_READ=1
+          export NCCL_IB_GID_INDEX=3
+          {% endif %}
+
+          # Topology Detection
+          export NCCL_TOPO_FILE=/etc/nccl/topology.xml
+        dest: /etc/nccl/nccl.conf
+        mode: '0644'
+
+    - name: Add NCCL configuration to profile
+      lineinfile:
+        path: /etc/profile.d/nccl.sh
+        line: "source /etc/nccl/nccl.conf"
+        create: yes
+        mode: '0644'
+
+    - name: Generate NCCL topology file
+      shell: nvidia-smi topo -m > /etc/nccl/topology.txt
+      args:
+        creates: /etc/nccl/topology.txt
+
+    - name: Create NCCL test directory
+      file:
+        path: /opt/nccl-tests
+        state: directory
+        mode: '0755'
+
+    - name: Clone NCCL tests repository
+      git:
+        repo: https://github.com/NVIDIA/nccl-tests.git
+        dest: /opt/nccl-tests
+        version: master
+        update: no
+      ignore_errors: yes
+
+    - name: Build NCCL tests
+      shell: |
+        cd /opt/nccl-tests
+        make -j$(nproc) MPI=1 CUDA_HOME=/usr/local/cuda
+      args:
+        creates: /opt/nccl-tests/build/all_reduce_perf
+      ignore_errors: yes
+
+    - name: Create NCCL hostfile for multi-node testing
+      copy:
+        content: |
+          {% for host in groups['spark_cluster'] %}
+          {{ hostvars[host]['ansible_default_ipv4']['address'] }} slots={{ hostvars[host]['ansible_processor_vcpus'] }}
+          {% endfor %}
+        dest: /etc/nccl/hostfile
+        mode: '0644'
+      when: inventory_hostname == groups['spark_cluster'][0]
+
+    - name: Create NCCL test script
+      copy:
+        content: |
+          #!/bin/bash
+          # NCCL Test Script
+          # Usage: ./nccl_test.sh [test_type] [num_gpus]
+
+          set -e
+
+          # Source NCCL configuration
+          source /etc/nccl/nccl.conf
+
+          TEST_TYPE="${1:-all_reduce_perf}"
+          NUM_GPUS="${2:-$(nvidia-smi -L | wc -l)}"
+
+          echo "Running NCCL ${TEST_TYPE} test with ${NUM_GPUS} GPUs..."
+
+          if [ -f "/opt/nccl-tests/build/${TEST_TYPE}" ]; then
+              /opt/nccl-tests/build/${TEST_TYPE} \
+                  -b 8 \
+                  -e 256M \
+                  -f 2 \
+                  -g ${NUM_GPUS} \
+                  -c 1
+          else
+              echo "NCCL test binary not found. Please build NCCL tests first."
+              exit 1
+          fi
+        dest: /usr/local/bin/nccl_test.sh
+        mode: '0755'
+
+    - name: Create multi-node NCCL test script
+      copy:
+        content: |
+          #!/bin/bash
+          # Multi-node NCCL Test Script
+          # Usage: ./nccl_multinode_test.sh [test_type]
+
+          set -e
+
+          # Source NCCL configuration
+          source /etc/nccl/nccl.conf
+
+          TEST_TYPE="${1:-all_reduce_perf}"
+          HOSTFILE="/etc/nccl/hostfile"
+          GPUS_PER_NODE=$(nvidia-smi -L | wc -l)
+          NUM_NODES=$(wc -l < ${HOSTFILE})
+          TOTAL_GPUS=$((GPUS_PER_NODE * NUM_NODES))
+
+          echo "Running multi-node NCCL ${TEST_TYPE} test..."
+          echo "Nodes: ${NUM_NODES}"
+          echo "GPUs per node: ${GPUS_PER_NODE}"
+          echo "Total GPUs: ${TOTAL_GPUS}"
+
+          mpirun -np ${TOTAL_GPUS} \
+              --hostfile ${HOSTFILE} \
+              --map-by ppr:${GPUS_PER_NODE}:node \
+              -x NCCL_SOCKET_IFNAME \
+              -x NCCL_IB_DISABLE \
+              -x NCCL_DEBUG \
+              /opt/nccl-tests/build/${TEST_TYPE} \
+                  -b 8 \
+                  -e 256M \
+                  -f 2 \
+                  -g 1 \
+                  -c 1
+        dest: /usr/local/bin/nccl_multinode_test.sh
+        mode: '0755'
+      when: inventory_hostname == groups['spark_cluster'][0]
+
+    - name: Run basic NCCL test
+      command: timeout 60 /usr/local/bin/nccl_test.sh all_reduce_perf
+      register: nccl_test
+      changed_when: false
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Display NCCL test results
+      debug:
+        msg:
+          - "NCCL installation completed!"
+          - "CUDA Version: {{ installed_cuda_version.stdout | default('N/A') }}"
+          - "NCCL Version: Installed"
+          - "InfiniBand: {{ 'Available' if has_infiniband else 'Not Available' }}"
+          - "Network Interface: {{ nccl_socket_ifname }}"
+          - "Test Status: {{ 'PASSED' if nccl_test.rc == 0 else 'Check /var/log/nccl_test.log' }}"
+
+    - name: Save NCCL test log
+      copy:
+        content: "{{ nccl_test.stdout | default('') }}\n{{ nccl_test.stderr | default('') }}"
+        dest: /var/log/nccl_test.log
+        mode: '0644'
+      when: nccl_test is defined
+
+- name: Generate NCCL cluster summary
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create NCCL cluster summary
+      copy:
+        content: |
+          NCCL Cluster Configuration Summary
+          ===================================
+          Generated: {{ ansible_date_time.iso8601 }}
+
+          Cluster Nodes:
+          {% for host in groups['spark_cluster'] %}
+          - {{ hostvars[host]['inventory_hostname'] }}
+            IP: {{ hostvars[host]['ansible_default_ipv4']['address'] }}
+            Network Interface: {{ hostvars[host]['nccl_socket_ifname'] }}
+            InfiniBand: {{ 'Yes' if hostvars[host]['has_infiniband'] else 'No' }}
+          {% endfor %}
+
+          Configuration Files:
+          - NCCL Config: /etc/nccl/nccl.conf
+          - Hostfile: /etc/nccl/hostfile
+          - Topology: /etc/nccl/topology.txt
+
+          Test Scripts:
+          - Single Node: /usr/local/bin/nccl_test.sh
+          - Multi Node: /usr/local/bin/nccl_multinode_test.sh
+
+          Usage:
+          - Single node test: sudo /usr/local/bin/nccl_test.sh
+          - Multi node test: sudo /usr/local/bin/nccl_multinode_test.sh
+        dest: ./nccl_cluster_summary.txt
+      delegate_to: localhost
