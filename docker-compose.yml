@@ -1,0 +1,126 @@
+# Docker Compose Configuration for Spark Cluster
+# Version: 1.0.0
+
+version: '3.8'
+
+# Shared networks
+networks:
+  spark-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# Shared volumes
+volumes:
+  shared-data:
+    driver: local
+  shared-models:
+    driver: local
+  shared-logs:
+    driver: local
+  shared-storage:
+    driver: local
+
+# Base service configuration (can be extended by agents)
+x-base-service: &base-service
+  networks:
+    - spark-network
+  volumes:
+    - shared-data:/data
+    - shared-logs:/logs
+    - ./shared:/app/shared:ro
+  restart: unless-stopped
+  environment:
+    - PYTHONUNBUFFERED=1
+    - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+# GPU service configuration
+x-gpu-service: &gpu-service
+  <<: *base-service
+  runtime: nvidia
+  environment:
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+services:
+  # Base infrastructure service (Agent 1)
+  agent1-infrastructure:
+    <<: *base-service
+    container_name: spark-agent1-infra
+    build:
+      context: .
+      dockerfile: shared/base-minimal.Dockerfile
+    image: spark-cluster/agent1:latest
+    hostname: agent1-infra
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./agent1_infrastructure:/app/agent1:ro
+      - shared-storage:/shared
+    environment:
+      - AGENT_NAME=agent1_infrastructure
+      - AGENT_VERSION=1.0.0
+    healthcheck:
+      test: ["CMD", "python3", "/usr/local/bin/health_check.py", "--self-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    command: ["python3", "-m", "http.server", "8000"]
+
+  # Example GPU service (template for future agents)
+  # agent2-cuda:
+  #   <<: *gpu-service
+  #   container_name: spark-agent2-cuda
+  #   build:
+  #     context: .
+  #     dockerfile: shared/base.Dockerfile
+  #   image: spark-cluster/agent2:latest
+  #   hostname: agent2-cuda
+  #   ports:
+  #     - "8002:8000"
+  #   volumes:
+  #     - ./agents/agent2_cuda:/app/agent2:ro
+  #   environment:
+  #     - AGENT_NAME=agent2_cuda
+  #     - AGENT_VERSION=1.0.0
+  #     - CUDA_VISIBLE_DEVICES=0,1
+  #   depends_on:
+  #     - agent1-infrastructure
+
+  # Monitoring stack (optional)
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: spark-prometheus
+  #   networks:
+  #     - spark-network
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #     - prometheus-data:/prometheus
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: spark-grafana
+  #   networks:
+  #     - spark-network
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - grafana-data:/var/lib/grafana
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+  #   depends_on:
+  #     - prometheus
+
+# Additional volumes for monitoring
+# volumes:
+#   prometheus-data:
+#     driver: local
+#   grafana-data:
+#     driver: local

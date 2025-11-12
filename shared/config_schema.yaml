@@ -1,0 +1,393 @@
+# Unified Configuration Schema for All Agents
+# Version: 1.0.0
+
+schema_version: "1.0.0"
+
+# Agent Configuration Schema
+agent:
+  # Agent identification
+  name:
+    type: string
+    required: true
+    description: "Unique name of the agent"
+    example: "agent1_infrastructure"
+
+  version:
+    type: string
+    required: true
+    pattern: "^\\d+\\.\\d+\\.\\d+$"
+    description: "Semantic version of the agent"
+    example: "1.0.0"
+
+  description:
+    type: string
+    required: false
+    description: "Brief description of agent functionality"
+    example: "Infrastructure foundation with networking and remote access"
+
+  # Dependencies
+  dependencies:
+    type: list
+    items:
+      type: string
+    required: false
+    description: "List of other agents this agent depends on"
+    example: ["agent1_infrastructure"]
+
+  # Docker configuration
+  docker:
+    image:
+      type: string
+      required: true
+      description: "Docker image to use"
+      default: "spark-cluster/base:latest"
+      example: "spark-cluster/agent1:1.0.0"
+
+    build:
+      context:
+        type: string
+        required: false
+        description: "Build context path"
+        example: "./agents/agent1_infra"
+
+      dockerfile:
+        type: string
+        required: false
+        description: "Path to Dockerfile"
+        default: "Dockerfile"
+        example: "Dockerfile.gpu"
+
+    ports:
+      type: list
+      items:
+        type: integer
+        minimum: 1
+        maximum: 65535
+      required: false
+      description: "List of ports to expose"
+      example: [8000, 8001, 6006]
+
+    volumes:
+      type: list
+      items:
+        type: string
+      required: false
+      description: "List of volume mounts (host:container or named volumes)"
+      example:
+        - "/data:/app/data"
+        - "/models:/app/models"
+        - "shared-logs:/logs"
+
+    environment:
+      type: dict
+      required: false
+      description: "Environment variables"
+      example:
+        CUDA_VISIBLE_DEVICES: "0,1"
+        NCCL_DEBUG: "INFO"
+        LOG_LEVEL: "INFO"
+
+    # GPU requirements
+    gpu_required:
+      type: boolean
+      required: false
+      default: false
+      description: "Whether this agent requires GPU access"
+      example: true
+
+    gpu_count:
+      type: integer
+      minimum: 0
+      required: false
+      default: 0
+      description: "Number of GPUs required (0 for all)"
+      example: 2
+
+    gpu_capabilities:
+      type: list
+      items:
+        type: string
+        enum: ["compute", "utility", "graphics"]
+      required: false
+      default: ["compute", "utility"]
+      description: "GPU capabilities required"
+
+  # Resource limits
+  resources:
+    cpu:
+      limit:
+        type: string
+        required: false
+        description: "CPU limit (e.g., '2.0' for 2 cores)"
+        example: "4.0"
+
+      reservation:
+        type: string
+        required: false
+        description: "CPU reservation"
+        example: "2.0"
+
+    memory:
+      limit:
+        type: string
+        required: false
+        description: "Memory limit (e.g., '8G')"
+        example: "16G"
+
+      reservation:
+        type: string
+        required: false
+        description: "Memory reservation"
+        example: "8G"
+
+    shm_size:
+      type: string
+      required: false
+      default: "2G"
+      description: "Shared memory size for multi-processing"
+      example: "8G"
+
+  # Networking
+  network:
+    mode:
+      type: string
+      enum: ["bridge", "host", "overlay", "none"]
+      required: false
+      default: "bridge"
+      description: "Network mode"
+
+    hostname:
+      type: string
+      required: false
+      description: "Container hostname"
+      example: "agent1-infra"
+
+    extra_hosts:
+      type: list
+      items:
+        type: string
+      required: false
+      description: "Additional host entries"
+      example:
+        - "spark-001:192.168.1.101"
+        - "spark-002:192.168.1.102"
+
+  # Health check configuration
+  health_check:
+    enabled:
+      type: boolean
+      required: false
+      default: true
+      description: "Enable health check"
+
+    endpoint:
+      type: string
+      required: false
+      default: "/health"
+      description: "Health check endpoint"
+      example: "/api/v1/health"
+
+    port:
+      type: integer
+      minimum: 1
+      maximum: 65535
+      required: false
+      description: "Port for health check"
+      example: 8000
+
+    interval:
+      type: integer
+      minimum: 1
+      required: false
+      default: 30
+      description: "Health check interval in seconds"
+
+    timeout:
+      type: integer
+      minimum: 1
+      required: false
+      default: 10
+      description: "Health check timeout in seconds"
+
+    retries:
+      type: integer
+      minimum: 1
+      required: false
+      default: 3
+      description: "Number of retries before marking unhealthy"
+
+    start_period:
+      type: integer
+      minimum: 0
+      required: false
+      default: 5
+      description: "Grace period before starting health checks (seconds)"
+
+  # Command and entrypoint
+  command:
+    type: string
+    required: false
+    description: "Override container command"
+    example: "python /app/main.py"
+
+  entrypoint:
+    type: string
+    required: false
+    description: "Override container entrypoint"
+    example: "/bin/bash"
+
+  # Restart policy
+  restart:
+    type: string
+    enum: ["no", "always", "on-failure", "unless-stopped"]
+    required: false
+    default: "unless-stopped"
+    description: "Container restart policy"
+
+  # Security
+  security:
+    privileged:
+      type: boolean
+      required: false
+      default: false
+      description: "Run container in privileged mode"
+
+    cap_add:
+      type: list
+      items:
+        type: string
+      required: false
+      description: "Capabilities to add"
+      example: ["SYS_ADMIN", "NET_ADMIN"]
+
+    cap_drop:
+      type: list
+      items:
+        type: string
+      required: false
+      description: "Capabilities to drop"
+      example: ["ALL"]
+
+# Playbook Configuration Schema
+playbook:
+  name:
+    type: string
+    required: true
+    description: "Playbook name"
+    example: "setup-nccl"
+
+  agent:
+    type: string
+    required: true
+    description: "Agent this playbook belongs to"
+    example: "agent1_infrastructure"
+
+  description:
+    type: string
+    required: false
+    description: "Playbook description"
+
+  dependencies:
+    type: list
+    items:
+      type: string
+    required: false
+    description: "Other playbooks that must run first"
+    example: ["setup-ssh", "setup-network"]
+
+  variables:
+    type: dict
+    required: false
+    description: "Playbook variables"
+
+  tags:
+    type: list
+    items:
+      type: string
+    required: false
+    description: "Tags for selective execution"
+    example: ["network", "gpu", "setup"]
+
+# Service Configuration Schema
+service:
+  name:
+    type: string
+    required: true
+    description: "Service name"
+
+  port:
+    type: integer
+    minimum: 1
+    maximum: 65535
+    required: true
+    description: "Service port"
+
+  protocol:
+    type: string
+    enum: ["http", "https", "tcp", "udp"]
+    required: false
+    default: "http"
+    description: "Service protocol"
+
+  health_endpoint:
+    type: string
+    required: false
+    default: "/health"
+    description: "Health check endpoint"
+
+  metrics_endpoint:
+    type: string
+    required: false
+    default: "/metrics"
+    description: "Metrics endpoint"
+
+# Cluster Configuration Schema
+cluster:
+  name:
+    type: string
+    required: true
+    description: "Cluster name"
+
+  nodes:
+    type: list
+    items:
+      hostname:
+        type: string
+        required: true
+      ip:
+        type: string
+        required: true
+        pattern: "^\\d+\\.\\d+\\.\\d+\\.\\d+$"
+      user:
+        type: string
+        required: false
+        default: "spark"
+      roles:
+        type: list
+        items:
+          type: string
+        required: false
+    required: true
+    minimum_items: 1
+
+  ssh:
+    key_path:
+      type: string
+      required: true
+    key_type:
+      type: string
+      enum: ["rsa", "ed25519", "ecdsa"]
+      required: false
+      default: "ed25519"
+
+  network:
+    subnet:
+      type: string
+      required: false
+    interface:
+      type: string
+      required: false
+    mtu:
+      type: integer
+      required: false
+      default: 1500
