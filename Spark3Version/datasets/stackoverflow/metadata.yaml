@@ -1,0 +1,4 @@
+format: jsonl
+name: stackoverflow
+split_size: 1000
+train_path: C:\Users\smlfl\Documents\Claudetest\Spark3\Spark3Version\datasets\stackoverflow\slices\slice_0000.json

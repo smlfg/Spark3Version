@@ -1,0 +1,10 @@
+chat_template: chatml
+hf_path: unsloth/Qwen1.5-0.5B-bnb-4bit
+load_in_4bit: true
+model_type: causal
+name: qwen-0.5b
+target_modules:
+- q_proj
+- k_proj
+- v_proj
+- o_proj
