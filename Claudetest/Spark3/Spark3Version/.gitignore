@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv
+env/
+
+# ML Models & Data (Local only)
+models/*/
+!models/registry.json
+datasets/*/
+!datasets/registry.json
+prompts/*/
+!prompts/registry.json
+
+# Experiments & Output
+experiments/
+*.log
+*.gguf
+*.pt
+*.safetensors
+adapter_model/
+
+# IDE
+.vscode/
+.idea/
