@@ -1,0 +1,16 @@
+# ModularFineTune Dependencies
+
+# CLI Framework
+typer>=0.20.0
+
+# Terminal UI
+rich>=14.2.0
+
+# Data Validation
+pydantic>=2.12.0
+
+# Future ML Dependencies (uncomment when needed)
+# torch>=2.0.0
+# transformers>=4.30.0
+# datasets>=2.14.0
+# peft>=0.4.0
