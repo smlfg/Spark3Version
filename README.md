@@ -1,135 +1,98 @@
-# ModularFineTune (MFT)
+# ModularFineTune
 
-**Educational Fine-Tuning Engine on DGX Spark**
-
-ModularFineTune ist ein modulares Framework zum effizienten Finetuning von Large Language Models (LLMs) mit Fokus auf Lernbarkeit, Geschwindigkeit und Flexibilität. Entwickelt für den Einsatz auf DGX-Systemen, bietet MFT eine intuitive Architektur für akademische und professionelle Anwendungen.
+**Educational LLM Engine powered by Unsloth & DGX**
 
 ---
 
-## Features
+## Quick Start
 
-- 🧩 **Plug-and-Play Architecture**
-  Modulare Komponenten für Modelle, Datasets und Prompts - einfach austauschbar und erweiterbar
-
-- 🚀 **Unsloth Acceleration**
-  2x schnelleres Training durch optimierte Kernels und Memory-Management
-
-- 🎓 **Teaching Mode**
-  Real-time Feedback während des Trainings - ideal für Lern- und Experimentiersituationen
-
-- 📊 **CLI-basierte Workflows**
-  Intuitive Kommandozeilen-Schnittstelle für alle Operationen
-
-- ⚙️ **Zentrale Konfiguration**
-  YAML-basierte Config für reproduzierbare Experimente
-
----
-
-## Installation
-
-### Voraussetzungen
-- Python 3.10+
-- CUDA 11.8+ (für GPU-Beschleunigung)
-- DGX Spark Environment (empfohlen)
-
-### Abhängigkeiten installieren
-
-```bash
-# Unsloth Core + Latest Features
-pip install unsloth
-pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-
-# Training & Adapter Libraries
-pip install --no-deps "trl<0.9.0" peft accelerate bitsandbytes
-
-# CLI & Utilities
-pip install typer rich
-```
-
-### Alternative: requirements.txt
+### Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
+### List Available Resources
+
+```bash
+python cli.py list
+```
+
+### Train Your First Model
+
+```bash
+python cli.py train --model qwen-0.5b --dataset stackoverflow --name my_run
+```
+
 ---
 
-## Projektstruktur
+## Features
+
+- 🧩 **Plug-and-Play Architecture** - Modular components for models, datasets, and prompts
+- 🚀 **Unsloth Acceleration** - 2x faster training with optimized kernels
+- 🎓 **Teaching Mode** - Real-time feedback for educational purposes
+- 📊 **CLI-First Design** - Intuitive command-line interface
+- ⚙️ **YAML Configuration** - Reproducible experiments
+
+---
+
+## Project Structure
 
 ```
 Spark3Version/
-├── models/         # Modell-Definitionen und Adapter
-├── datasets/       # Dataset-Loader und Preprocessing-Pipelines
-├── prompts/        # Prompt-Templates und Strategien
-├── core/           # Kern-Funktionalität und Basis-Klassen
-├── registry/       # Komponenten-Registry für Plugins
-├── cli.py          # Kommandozeilen-Interface
-└── config.yaml     # Zentrale Konfigurationsdatei
+├── models/         # Model definitions and adapters
+├── datasets/       # Dataset loaders and preprocessing
+├── prompts/        # Prompt templates and strategies
+├── core/           # Core functionality and base classes
+├── registry/       # Component registry system
+├── cli.py          # Command-line interface
+└── config.yaml     # Central configuration
 ```
-
-### Ordner-Beschreibungen
-
-#### `models/`
-Enthält Modell-Definitionen und Adapter für verschiedene LLM-Architekturen (Qwen, LLaMA, Mistral, etc.). Integriert mit Unsloth für beschleunigte LoRA/QLoRA-Trainings.
-
-#### `datasets/`
-Dataset-Loader und Preprocessing-Pipelines für strukturierte Fine-Tuning-Daten (z.B. StackOverflow, Alpaca, Custom Datasets).
-
-#### `prompts/`
-Prompt-Templates und -Strategien für verschiedene Anwendungsfälle. Unterstützt Chat-, Instruct- und Completion-Formate.
-
-#### `core/`
-Kern-Funktionalität inkl. Training-Loop, Evaluation und Teaching-Mode-Features.
-
-#### `registry/`
-Plugin-System zur Registrierung benutzerdefinierter Komponenten.
 
 ---
 
-## Quickstart
+## CLI Commands
 
-### 1. Verfügbare Modelle auflisten
+### List Resources
 
 ```bash
+# List all available models
 python cli.py list models
-```
 
-### 2. Training starten
-
-```bash
-python cli.py train --model qwen-0.5b --dataset stackoverflow
-```
-
-### 3. Training mit Teaching Mode
-
-```bash
-python cli.py train --model qwen-0.5b --dataset stackoverflow --teaching-mode
-```
-
-### 4. Weitere Befehle
-
-```bash
-# Verfügbare Datasets anzeigen
+# List all available datasets
 python cli.py list datasets
 
-# Verfügbare Prompts anzeigen
+# List all available prompts
 python cli.py list prompts
+```
 
-# Modell mit Custom Config trainieren
-python cli.py train --config my_config.yaml
+### Training
 
-# Hilfe anzeigen
+```bash
+# Basic training
+python cli.py train --model qwen-0.5b --dataset stackoverflow --name my_run
+
+# Training with Teaching Mode
+python cli.py train --model qwen-0.5b --dataset stackoverflow --name my_run --teaching-mode
+
+# Training with custom config
+python cli.py train --config my_config.yaml --name my_run
+```
+
+### Help
+
+```bash
 python cli.py --help
+python cli.py train --help
 ```
 
 ---
 
-## Konfiguration
+## Configuration
 
-Die zentrale Konfiguration erfolgt über `Spark3Version/config.yaml`:
+Edit `Spark3Version/config.yaml` for global settings:
 
 ```yaml
-# Beispiel-Konfiguration
 model:
   name: "qwen-0.5b"
   quantization: "4bit"
@@ -146,15 +109,39 @@ dataset:
   max_seq_length: 2048
 
 teaching_mode:
-  enabled: true
+  enabled: false
   feedback_interval: 100
 ```
 
 ---
 
-## Eigene Komponenten hinzufügen
+## Installation Details
 
-### Neues Modell registrieren
+### Requirements
+
+- Python 3.10+
+- CUDA 11.8+ (for GPU acceleration)
+- DGX Spark Environment (recommended)
+
+### Manual Installation
+
+```bash
+# Unsloth Core + Latest Features
+pip install unsloth
+pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+
+# Training & Adapter Libraries
+pip install --no-deps "trl<0.9.0" peft accelerate bitsandbytes
+
+# CLI & Utilities
+pip install typer rich
+```
+
+---
+
+## Extending MFT
+
+### Register a Custom Model
 
 ```python
 # Spark3Version/models/my_model.py
@@ -163,11 +150,11 @@ from registry import ModelRegistry
 @ModelRegistry.register("my-custom-model")
 class MyCustomModel:
     def load(self):
-        # Modell-Loading-Logik
+        # Your model loading logic
         pass
 ```
 
-### Neues Dataset hinzufügen
+### Register a Custom Dataset
 
 ```python
 # Spark3Version/datasets/my_dataset.py
@@ -176,11 +163,11 @@ from registry import DatasetRegistry
 @DatasetRegistry.register("my-dataset")
 class MyDataset:
     def load(self):
-        # Dataset-Loading-Logik
+        # Your dataset loading logic
         pass
 ```
 
-### Neue Prompt-Strategie
+### Register a Custom Prompt
 
 ```python
 # Spark3Version/prompts/my_prompt.py
@@ -193,96 +180,84 @@ def my_prompt_template(instruction, context):
 
 ---
 
-## Teaching Mode Features
+## Teaching Mode
 
-Der Teaching Mode bietet:
-- **Real-time Loss Monitoring**: Live-Visualisierung des Training-Fortschritts
-- **Checkpoint-Erklärungen**: Automatische Hinweise zu kritischen Training-Events
-- **Hyperparameter-Vorschläge**: Intelligente Empfehlungen bei Overfitting/Underfitting
-- **Gradient-Analysen**: Detaillierte Insights in Backpropagation-Dynamiken
-
-Aktivierung:
-```bash
-python cli.py train --model qwen-0.5b --dataset stackoverflow --teaching-mode
-```
-
----
-
-## Unsloth Integration
-
-MFT nutzt Unsloth für:
-- **2x schnelleres Training** durch optimierte CUDA-Kernels
-- **60% weniger Memory-Verbrauch** durch effizientes Gradient Checkpointing
-- **Automatische Mixed Precision** (FP16/BF16)
-- **Nahtlose LoRA/QLoRA-Integration**
-
-Keine zusätzliche Konfiguration nötig - wird automatisch aktiviert wenn verfügbar.
-
----
-
-## Entwicklung
+Activate Teaching Mode for enhanced learning experience:
 
 ```bash
-# Repository klonen
-git clone https://github.com/smlfg/Spark3Version.git
-cd Spark3Version
-
-# Virtual Environment erstellen
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
-
-# Dependencies installieren
-pip install unsloth
-pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
-pip install --no-deps "trl<0.9.0" peft accelerate bitsandbytes typer rich
-
-# Tests ausführen (wenn vorhanden)
-pytest tests/
+python cli.py train --model qwen-0.5b --dataset stackoverflow --name my_run --teaching-mode
 ```
+
+**Features:**
+- Real-time loss monitoring
+- Checkpoint explanations
+- Hyperparameter suggestions
+- Gradient analysis
 
 ---
 
-## Performance Benchmarks
+## Performance
 
-| Modell | Standard Training | MFT + Unsloth | Speedup |
-|--------|------------------|---------------|---------|
+| Model | Standard Training | MFT + Unsloth | Speedup |
+|-------|------------------|---------------|---------|
 | Qwen 0.5B | 120 min | 60 min | 2.0x |
 | LLaMA 7B | 480 min | 240 min | 2.0x |
 | Mistral 7B | 510 min | 255 min | 2.0x |
 
-*Benchmarks auf NVIDIA DGX A100 (40GB)*
+*Benchmarks on NVIDIA DGX A100 (40GB)*
 
 ---
 
 ## Troubleshooting
 
 ### CUDA Out of Memory
+
 ```bash
-# Reduziere Batch Size oder Sequence Length
-python cli.py train --model qwen-0.5b --dataset stackoverflow --batch-size 2
+# Reduce batch size or sequence length
+python cli.py train --model qwen-0.5b --dataset stackoverflow --name my_run --batch-size 2
 ```
 
 ### Unsloth Installation Errors
+
 ```bash
-# Stelle sicher, dass CUDA korrekt installiert ist
+# Verify CUDA installation
 nvcc --version
 
-# Reinstall mit spezifischer CUDA-Version
+# Reinstall Unsloth
 pip install unsloth --upgrade --force-reinstall
 ```
 
 ---
 
-## Lizenz
+## Development
 
-MIT License - siehe [LICENSE](LICENSE) für Details.
+```bash
+# Clone repository
+git clone https://github.com/smlfg/Spark3Version.git
+cd Spark3Version
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run tests
+pytest tests/
+```
 
 ---
 
-## Kontakt & Beiträge
+## License
 
-Beiträge sind willkommen! Bitte erstellen Sie einen Pull Request oder öffnen Sie ein Issue für Vorschläge und Bugfixes.
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
 
 **Maintainer:** DGX Spark Team
 **Repository:** https://github.com/smlfg/Spark3Version
