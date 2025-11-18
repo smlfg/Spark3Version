@@ -1,5 +1,4 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
 
 
 class ModelMetadata(BaseModel):
@@ -7,16 +6,14 @@ class ModelMetadata(BaseModel):
     hf_path: str
     model_type: str = "causal"
     chat_template: str
-    target_modules: List[str]
+    load_in_4bit: bool = True
 
 
 class DatasetMetadata(BaseModel):
     name: str
     format: str
     train_path: str
-    system_column: Optional[str] = None
-    input_column: str
-    output_column: str
+    split_size: int = 1000
 
 
 class TrainingConfig(BaseModel):
@@ -24,7 +21,4 @@ class TrainingConfig(BaseModel):
     dataset_name: str
     output_dir: str
     epochs: int = 1
-    batch_size: int = 2
     learning_rate: float = 2e-4
-    max_seq_length: int = 2048
-    use_4bit: bool = True
