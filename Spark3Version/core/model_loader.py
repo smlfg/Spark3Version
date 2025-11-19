@@ -1,8 +1,5 @@
+from unsloth import FastLanguageModel # Import first!
 import torch
-try:
-    from unsloth import FastLanguageModel
-except ImportError:
-    print("⚠️ Unsloth not found. Install with setup.sh")
 
 def load_model_for_training(model_name: str, max_seq_length: int = 2048, load_in_4bit: bool = True):
     print(f"⏳ Loading Unsloth Model: {model_name}...")
