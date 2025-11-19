@@ -1,14 +1,17 @@
-from unsloth import FastLanguageModel # Import first!
+from unsloth import FastLanguageModel # MUST BE FIRST IMPORT
 import torch
 
 def load_model_for_training(model_name: str, max_seq_length: int = 2048, load_in_4bit: bool = True):
     print(f"⏳ Loading Unsloth Model: {model_name}...")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=max_seq_length,
-        dtype=None,
-        load_in_4bit=load_in_4bit,
-    )
+    try:
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=model_name,
+            max_seq_length=max_seq_length,
+            dtype=None,
+            load_in_4bit=load_in_4bit,
+        )
+    except Exception as e:
+        raise ImportError(f"Failed to load model via Unsloth: {e}")
 
     print("🔧 Attaching LoRA Adapters...")
     model = FastLanguageModel.get_peft_model(
