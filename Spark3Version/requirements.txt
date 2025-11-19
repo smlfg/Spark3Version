@@ -3,12 +3,11 @@ torch>=2.2.0
 packaging
 ninja
 einops
-flash-attn
 xformers
 triton
 scipy
 
-# HuggingFace ecosystem (Versions managed by setup.sh logic, but listed here for completeness)
+# HuggingFace ecosystem
 peft
 accelerate
 bitsandbytes
