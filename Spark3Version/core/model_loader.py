@@ -2,14 +2,10 @@ import torch
 try:
     from unsloth import FastLanguageModel
 except ImportError:
-    FastLanguageModel = None
-    print("⚠️ WARNING: Unsloth not installed. Running in Mock Mode creates errors later.")
+    print("⚠️ Unsloth not found. Install with setup.sh")
 
 def load_model_for_training(model_name: str, max_seq_length: int = 2048, load_in_4bit: bool = True):
-    if FastLanguageModel is None:
-        raise ImportError("Unsloth is not installed!")
-
-    print(f"⏳ Loading model: {model_name}...")
+    print(f"⏳ Loading Unsloth Model: {model_name}...")
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=max_seq_length,
@@ -17,7 +13,7 @@ def load_model_for_training(model_name: str, max_seq_length: int = 2048, load_in
         load_in_4bit=load_in_4bit,
     )
 
-    print("🔧 Attaching LoRA adapters...")
+    print("🔧 Attaching LoRA Adapters...")
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -28,5 +24,4 @@ def load_model_for_training(model_name: str, max_seq_length: int = 2048, load_in
         use_gradient_checkpointing="unsloth",
         random_state=3407,
     )
-    
     return model, tokenizer

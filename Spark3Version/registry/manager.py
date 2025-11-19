@@ -15,7 +15,6 @@ class RegistryManager:
         config_path = MODELS_DIR / name / "config.yaml"
         if not config_path.exists():
             raise FileNotFoundError(f"Model {name} not found at {config_path}")
-        
         with open(config_path, "r") as f:
             data = yaml.safe_load(f)
         return ModelMetadata(**data)
@@ -30,7 +29,6 @@ class RegistryManager:
         meta_path = DATASETS_DIR / name / "metadata.yaml"
         if not meta_path.exists():
             raise FileNotFoundError(f"Dataset {name} not found at {meta_path}")
-            
         with open(meta_path, "r") as f:
             data = yaml.safe_load(f)
         return DatasetMetadata(**data)
