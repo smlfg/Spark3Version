@@ -4,240 +4,189 @@ from typing import List, Dict
 from unsloth import FastLanguageModel
 from utils.paths import EXPERIMENTS_DIR
 
-# Prompt Batches für verschiedene Test-Szenarien
-PROMPT_BATCHES = {
-    "coding-basic": [
-        "Write a Python function to calculate the sum of two numbers.",
-        "Create a Python function that returns the factorial of a number.",
-        "Write a Python function to check if a string is a palindrome."
-    ],
-    "coding-advanced": [
-        "Implement a binary search algorithm in Python.",
-        "Write a Python class for a doubly linked list with insert and delete methods.",
-        "Create a Python function to find the longest common subsequence of two strings."
-    ],
-    "debugging": [
-        "Fix this code: def add(a b): return a + b",
-        "Debug this function: def divide(x, y): return x / y",
-        "Correct this loop: for i in range(10) print(i)"
-    ]
-}
+# Hardcoded Test Prompts
+TEST_PROMPTS = [
+    "Write a python function to add two numbers.",
+    "Explain what a class is in Python.",
+    "What is a list comprehension?"
+]
+
+# Default Base Model
+DEFAULT_BASE_MODEL = "unsloth/Qwen2.5-0.5B-bnb-4bit"
 
 
-class ModelTester:
-    """Test-Framework für Fine-Tuned Models."""
-
-    def __init__(self, experiment_name: str):
-        self.experiment_name = experiment_name
-        self.experiment_dir = EXPERIMENTS_DIR / experiment_name
-        self.results_path = self.experiment_dir / "results.md"
-
-        if not self.experiment_dir.exists():
-            raise FileNotFoundError(f"Experiment directory not found: {self.experiment_dir}")
-
-    def _load_base_model(self, model_name: str, max_seq_length: int = 2048):
-        """Lädt das Base Model mit Unsloth."""
-        print(f"📥 Loading base model: {model_name}")
-
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=model_name,
-            max_seq_length=max_seq_length,
-            dtype=None,  # Auto-detect
-            load_in_4bit=True,
-        )
-
-        FastLanguageModel.for_inference(model)
-        return model, tokenizer
-
-    def _load_finetuned_model(self, model_name: str, adapter_dir: Path, max_seq_length: int = 2048):
-        """Lädt das Fine-Tuned Model (Base + Adapter)."""
-        print(f"📥 Loading fine-tuned model from: {adapter_dir}")
-
-        # Lade Base Model mit Adapter
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=model_name,
-            max_seq_length=max_seq_length,
-            dtype=None,
-            load_in_4bit=True,
-        )
-
-        # Lade Adapter
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=16,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                          "gate_proj", "up_proj", "down_proj"],
-            lora_alpha=16,
-            lora_dropout=0,
-            bias="none",
-            use_gradient_checkpointing="unsloth",
-            random_state=3407,
-        )
-
-        # Lade gespeicherte Adapter-Weights
-        adapter_path = adapter_dir / "adapter_model.safetensors"
-        if adapter_path.exists():
-            from peft import PeftModel
-            model = PeftModel.from_pretrained(model, str(adapter_dir))
-
-        FastLanguageModel.for_inference(model)
-        return model, tokenizer
-
-    def _generate_response(self, model, tokenizer, prompt: str, max_new_tokens: int = 256) -> str:
-        """Generiert Antwort für einen Prompt."""
-        # Format prompt für Chat-Template
-        messages = [{"role": "user", "content": prompt}]
-        inputs = tokenizer.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_tensors="pt"
-        ).to("cuda")
-
-        # Generiere Antwort
-        outputs = model.generate(
-            input_ids=inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=0.7,
-            top_p=0.9,
-            do_sample=True,
-            use_cache=True,
-            pad_token_id=tokenizer.eos_token_id
-        )
-
-        # Dekodiere nur die generierte Antwort (ohne Input)
-        response = tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True)
-        return response.strip()
-
-    def _cleanup_model(self, model):
-        """Gibt VRAM frei."""
-        print("🧹 Cleaning up VRAM...")
-        del model
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
-    def _save_results(self, results: List[Dict]):
-        """Speichert Test-Ergebnisse in Markdown."""
-        with open(self.results_path, 'w', encoding='utf-8') as f:
-            f.write(f"# Test Results: {self.experiment_name}\n\n")
-            f.write(f"**Date:** {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}\n\n")
-            f.write("---\n\n")
-
-            for i, result in enumerate(results, 1):
-                f.write(f"## Test {i}: {result['prompt'][:60]}...\n\n")
-                f.write(f"### Prompt\n```\n{result['prompt']}\n```\n\n")
-                f.write(f"### Base Model Response\n```\n{result['base_response']}\n```\n\n")
-                f.write(f"### Fine-Tuned Model Response\n```\n{result['finetuned_response']}\n```\n\n")
-                f.write("---\n\n")
-
-        print(f"✅ Results saved to: {self.results_path}")
-
-    def run_test(self,
-                 model_name: str,
-                 prompt_batch: str = "coding-basic",
-                 max_prompts: int = 3) -> None:
-        """
-        Führt Test aus: Vergleicht Base Model vs. Fine-Tuned Model.
-
-        Args:
-            model_name: HuggingFace Model Name (z.B. "unsloth/Meta-Llama-3.1-8B-Instruct")
-            prompt_batch: Name des Prompt-Batches
-            max_prompts: Anzahl der Prompts zum Testen
-        """
-        if prompt_batch not in PROMPT_BATCHES:
-            raise ValueError(f"Unknown prompt batch: {prompt_batch}. Available: {list(PROMPT_BATCHES.keys())}")
-
-        prompts = PROMPT_BATCHES[prompt_batch][:max_prompts]
-        results = []
-
-        # === PHASE 1: Base Model Testing ===
-        print("\n" + "="*60)
-        print("PHASE 1: Testing Base Model")
-        print("="*60)
-
-        base_model, base_tokenizer = self._load_base_model(model_name)
-        base_responses = []
-
-        for i, prompt in enumerate(prompts, 1):
-            print(f"\n[{i}/{len(prompts)}] Generating base model response...")
-            response = self._generate_response(base_model, base_tokenizer, prompt)
-            base_responses.append(response)
-            print(f"✓ Done")
-
-        # Cleanup nach Base Model
-        self._cleanup_model(base_model)
-        del base_tokenizer
-
-        # === PHASE 2: Fine-Tuned Model Testing ===
-        print("\n" + "="*60)
-        print("PHASE 2: Testing Fine-Tuned Model")
-        print("="*60)
-
-        adapter_dir = self.experiment_dir / "checkpoints"
-        if not adapter_dir.exists():
-            # Fallback: Suche nach finalem Output
-            adapter_dir = self.experiment_dir / "output"
-
-        if not adapter_dir.exists():
-            raise FileNotFoundError(f"Adapter directory not found: {adapter_dir}")
-
-        ft_model, ft_tokenizer = self._load_finetuned_model(model_name, adapter_dir)
-        ft_responses = []
-
-        for i, prompt in enumerate(prompts, 1):
-            print(f"\n[{i}/{len(prompts)}] Generating fine-tuned model response...")
-            response = self._generate_response(ft_model, ft_tokenizer, prompt)
-            ft_responses.append(response)
-            print(f"✓ Done")
-
-        # Cleanup nach Fine-Tuned Model
-        self._cleanup_model(ft_model)
-        del ft_tokenizer
-
-        # === PHASE 3: Ergebnisse zusammenstellen ===
-        print("\n" + "="*60)
-        print("PHASE 3: Saving Results")
-        print("="*60)
-
-        for prompt, base_resp, ft_resp in zip(prompts, base_responses, ft_responses):
-            results.append({
-                'prompt': prompt,
-                'base_response': base_resp,
-                'finetuned_response': ft_resp
-            })
-
-        self._save_results(results)
-
-        print("\n✅ Test completed successfully!")
-        print(f"📄 Results: {self.results_path}")
-
-
-def run_test(experiment_name: str,
-             model_name: str = "unsloth/Meta-Llama-3.1-8B-Instruct",
-             prompt_batch: str = "coding-basic",
-             max_prompts: int = 3) -> None:
+def run_test(experiment_name: str, base_model: str = DEFAULT_BASE_MODEL) -> None:
     """
-    Convenience-Funktion zum Testen eines Experiments.
+    Inference Testing Engine: Vergleicht Base Model vs. Fine-Tuned Model.
 
     Args:
-        experiment_name: Name des Experiments
-        model_name: HuggingFace Model Name
-        prompt_batch: Prompt-Batch Name ("coding-basic", "coding-advanced", "debugging")
-        max_prompts: Anzahl der zu testenden Prompts
+        experiment_name: Name des Experiments (z.B. "exp-001")
+        base_model: HuggingFace Model Name (default: Qwen2.5-0.5B-bnb-4bit)
 
-    Example:
-        >>> run_test("exp-001", prompt_batch="coding-basic", max_prompts=3)
+    Output:
+        Speichert Vergleich in experiments/{experiment_name}/comparison.md
     """
-    tester = ModelTester(experiment_name)
-    tester.run_test(model_name, prompt_batch, max_prompts)
+    experiment_dir = EXPERIMENTS_DIR / experiment_name
+    output_path = experiment_dir / "comparison.md"
+
+    if not experiment_dir.exists():
+        raise FileNotFoundError(f"Experiment directory not found: {experiment_dir}")
+
+    print("\n" + "="*70)
+    print(f"🧪 INFERENCE TEST: {experiment_name}")
+    print("="*70)
+
+    # === PHASE 1: Base Model (Reference) ===
+    print("\n🤖 PHASE 1: BEFORE TRAINING (Base Model)")
+    print("-" * 70)
+
+    base_responses = _test_base_model(base_model, TEST_PROMPTS)
+
+    # VRAM Cleanup
+    torch.cuda.empty_cache()
+
+    # === PHASE 2: Fine-Tuned Model ===
+    print("\n🚀 PHASE 2: AFTER TRAINING (Fine-Tuned Model)")
+    print("-" * 70)
+
+    finetuned_responses = _test_finetuned_model(base_model, experiment_dir, TEST_PROMPTS)
+
+    # === PHASE 3: Save Comparison ===
+    print("\n📝 PHASE 3: Saving Comparison")
+    print("-" * 70)
+
+    _save_comparison(output_path, experiment_name, TEST_PROMPTS, base_responses, finetuned_responses)
+
+    print(f"\n✅ Test completed!")
+    print(f"📄 Results saved to: {output_path}")
+
+
+def _test_base_model(model_name: str, prompts: List[str]) -> List[str]:
+    """Testet das Base Model und gibt Antworten zurück."""
+    print(f"📥 Loading base model: {model_name}")
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=2048,
+        dtype=None,
+        load_in_4bit=True,
+    )
+
+    FastLanguageModel.for_inference(model)
+
+    responses = []
+    for i, prompt in enumerate(prompts, 1):
+        print(f"  [{i}/{len(prompts)}] Generating response...")
+        response = _generate_response(model, tokenizer, prompt)
+        responses.append(response)
+
+    # Cleanup
+    print("🧹 Cleaning up base model...")
+    del model, tokenizer
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+
+    return responses
+
+
+def _test_finetuned_model(base_model: str, experiment_dir: Path, prompts: List[str]) -> List[str]:
+    """Testet das Fine-Tuned Model (Base + Adapter) und gibt Antworten zurück."""
+    # Finde Adapter Directory
+    adapter_dir = experiment_dir / "checkpoints"
+    if not adapter_dir.exists():
+        adapter_dir = experiment_dir / "output"
+    if not adapter_dir.exists():
+        raise FileNotFoundError(f"Adapter directory not found in {experiment_dir}")
+
+    print(f"📥 Loading fine-tuned model from: {adapter_dir}")
+
+    # Lade Base Model
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=base_model,
+        max_seq_length=2048,
+        dtype=None,
+        load_in_4bit=True,
+    )
+
+    # Lade Adapter (PEFT)
+    from peft import PeftModel
+    model = PeftModel.from_pretrained(model, str(adapter_dir))
+
+    FastLanguageModel.for_inference(model)
+
+    responses = []
+    for i, prompt in enumerate(prompts, 1):
+        print(f"  [{i}/{len(prompts)}] Generating response...")
+        response = _generate_response(model, tokenizer, prompt)
+        responses.append(response)
+
+    # Cleanup
+    print("🧹 Cleaning up fine-tuned model...")
+    del model, tokenizer
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+
+    return responses
+
+
+def _generate_response(model, tokenizer, prompt: str, max_new_tokens: int = 256) -> str:
+    """Generiert Antwort für einen Prompt."""
+    # Format als Chat Message
+    messages = [{"role": "user", "content": prompt}]
+
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_tensors="pt"
+    ).to("cuda")
+
+    # Generate
+    outputs = model.generate(
+        input_ids=inputs,
+        max_new_tokens=max_new_tokens,
+        temperature=0.7,
+        top_p=0.9,
+        do_sample=True,
+        use_cache=True,
+        pad_token_id=tokenizer.eos_token_id
+    )
+
+    # Dekodiere nur neue Tokens (ohne Input)
+    response = tokenizer.decode(outputs[0][inputs.shape[1]:], skip_special_tokens=True)
+    return response.strip()
+
+
+def _save_comparison(output_path: Path, experiment_name: str, prompts: List[str],
+                     base_responses: List[str], finetuned_responses: List[str]) -> None:
+    """Speichert Vergleich in Markdown-Format."""
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(f"# Model Comparison: {experiment_name}\n\n")
+        f.write(f"**Device:** {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}\n\n")
+        f.write("---\n\n")
+
+        for i, (prompt, base_resp, ft_resp) in enumerate(zip(prompts, base_responses, finetuned_responses), 1):
+            f.write(f"## Test {i}\n\n")
+            f.write(f"### 📋 Prompt\n```\n{prompt}\n```\n\n")
+
+            f.write(f"### 🤖 BEFORE TRAINING\n")
+            f.write(f"```\n{base_resp}\n```\n\n")
+
+            f.write(f"### 🚀 AFTER TRAINING\n")
+            f.write(f"```\n{ft_resp}\n```\n\n")
+
+            f.write("---\n\n")
+
+    print(f"✅ Comparison saved to: {output_path}")
 
 
 if __name__ == "__main__":
-    # Test-Beispiel
     import sys
+
     if len(sys.argv) > 1:
         exp_name = sys.argv[1]
-        batch = sys.argv[2] if len(sys.argv) > 2 else "coding-basic"
-        run_test(exp_name, prompt_batch=batch)
+        model = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_BASE_MODEL
+        run_test(exp_name, base_model=model)
     else:
-        print("Usage: python tester.py <experiment_name> [prompt_batch]")
+        print("Usage: python tester.py <experiment_name> [base_model]")
+        print(f"Default base model: {DEFAULT_BASE_MODEL}")
